@@ -1,0 +1,10 @@
+[package]
+name = "n_queens_problem"
+version = "1.0.0"
+authors = ["Kára <contact@kára.me>"]
+
+[dependencies]
+rand = "0.3.14"
+num = "0.1.32"
+getopts = "0.2.14"
+term  = "0.4.4"
