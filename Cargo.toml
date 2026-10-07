@@ -1,6 +1,6 @@
 [package]
 name = "n_queens_problem"
-version = "1.0.0"
+version = "1.1.0"
 authors = ["Kára <contact@kára.me>"]
 edition = "2024"
 
