@@ -29,9 +29,21 @@ pub struct CheckerBoard {
 }
 
 impl CheckerBoard {
+    /// Return false for the sizes where no queens placement is possible.
+    pub fn has_solution(n: usize) -> bool {
+        !matches!(n, 0 | 2 | 3)
+    }
+
     /// Create a new checkerboard,
     /// and make all possible allocations and set them to 0.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there is no solution for n queens (see has_solution),
+    /// since solve() would never end.
     pub fn new(n: usize) -> CheckerBoard {
+        assert!(Self::has_solution(n), "there is no solution for {n} queens");
+
         let nb_init_conflicts = match n {
             4..=10 => n,
             11..=100 => n / 2,
@@ -336,6 +348,12 @@ mod tests {
     #[test]
     fn solves_a_single_queen() {
         assert!(solves(1));
+    }
+
+    #[test]
+    #[should_panic(expected = "no solution for 3 queens")]
+    fn refuses_a_size_without_solution() {
+        CheckerBoard::new(3);
     }
 
     #[test]
