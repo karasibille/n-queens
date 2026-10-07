@@ -1,4 +1,5 @@
-use std::collections::BTreeSet;
+use rand::rngs::SmallRng;
+use rand::{RngExt, SeedableRng};
 
 /// Statistics about a call to solve().
 /// Except for restarts, they describe the attempt that found the solution.
@@ -27,22 +28,24 @@ pub struct CheckerBoard {
     /// Index is the queen number, value is the queen column.
     queen: Vec<usize>,
 
-    /// This will hold the queens that are in conflicts.
+    /// The queens attacked at the end of init(), the only ones moved by the local search.
     conflict_queens: Vec<usize>,
 
     /// Diags are arrays, but their size isn't known at compile time so we use vectors.
     prim_diag: Vec<u8>,
     sec_diag: Vec<u8>,
 
-    /// Sets that will keep the diagonals that have more than 1 queen in it.
-    /// This will represent the number of conflicts in our checkerboard.
-    conflict_prim_diags: BTreeSet<usize>,
-    conflict_sec_diags: BTreeSet<usize>,
+    /// Number of diagonals that have more than 1 queen in it.
+    /// This represents the number of conflicts in our checkerboard.
+    conflict_diags: usize,
 
     /// free_cols is a vector that will keep the columns that have no queens in it.
     /// It's created with all the n columns,
     /// but the size is reduced during initialisation and falls down to 0.
     free_cols: Vec<usize>,
+
+    /// Random generator, seeded so that a run can be reproduced.
+    rng: SmallRng,
 }
 
 impl CheckerBoard {
@@ -53,12 +56,13 @@ impl CheckerBoard {
 
     /// Create a new checkerboard,
     /// and make all possible allocations and set them to 0.
+    /// The same seed always gives the same solution.
     ///
     /// # Panics
     ///
     /// Panics if there is no solution for n queens (see has_solution),
     /// since solve() would never end.
-    pub fn new(n: usize) -> CheckerBoard {
+    pub fn new(n: usize, seed: u64) -> CheckerBoard {
         assert!(Self::has_solution(n), "there is no solution for {n} queens");
 
         let nb_init_conflicts = match n {
@@ -74,15 +78,14 @@ impl CheckerBoard {
             n,
             nb_init_conflicts,
             queen: vec![0; n],
-            // Reserve some space for the queens that will be kept in conflict during initialisation.
-            conflict_queens: Vec::with_capacity(2 * nb_init_conflicts),
+            conflict_queens: Vec::new(),
             // At first all diagonals contain 0 queens.
             prim_diag: vec![0; 2 * n],
             sec_diag: vec![0; 2 * n],
-            conflict_prim_diags: BTreeSet::new(),
-            conflict_sec_diags: BTreeSet::new(),
+            conflict_diags: 0,
             // At first all columns are free.
             free_cols: (0..n).collect(),
+            rng: SmallRng::seed_from_u64(seed),
         }
     }
 
@@ -116,8 +119,7 @@ impl CheckerBoard {
         self.conflict_queens.clear();
         self.prim_diag.fill(0);
         self.sec_diag.fill(0);
-        self.conflict_prim_diags.clear();
-        self.conflict_sec_diags.clear();
+        self.conflict_diags = 0;
         self.free_cols.clear();
         self.free_cols.extend(0..self.n);
     }
@@ -148,13 +150,12 @@ impl CheckerBoard {
                 if !conflict || i >= first_kept_in_conflict || tries == MAX_TRIES {
                     self.place_queen(i, rfc);
                     self.pop_last_free_col();
-                    if conflict {
-                        self.push_in_conflict_queens(i);
-                    }
                     break;
                 }
             }
         }
+
+        self.conflict_queens = (0..self.n).filter(|&i| self.queen_is_attacked(i)).collect();
 
         nb_rand
     }
@@ -176,7 +177,7 @@ impl CheckerBoard {
                 for j in (i + 1)..self.conflict_queens.len() {
                     let qi: usize = self.conflict_queens[i];
                     let qj: usize = self.conflict_queens[j];
-                    if qi != qj && (self.queen_is_attacked(qi) || self.queen_is_attacked(qj)) {
+                    if self.queen_is_attacked(qi) || self.queen_is_attacked(qj) {
                         let prev_conflicts: usize = self.get_conflicts();
                         self.swap_queens_columns(qi, qj);
 
@@ -212,7 +213,7 @@ impl CheckerBoard {
     /// have a O(1) random pop (with pop_last_free_col method).
     fn get_rand_free_col(&mut self) -> usize {
         let len = self.free_cols.len();
-        let random = rand::random_range(0..len);
+        let random = self.rng.random_range(0..len);
 
         self.free_cols.swap(random, len - 1);
 
@@ -222,27 +223,6 @@ impl CheckerBoard {
     /// This method is meant to be used after get_rand_free_col.
     fn pop_last_free_col(&mut self) {
         self.free_cols.pop();
-    }
-
-    /// This method push a new queen in the conflict queens array.
-    /// We also add all the queens that are in conflict with it.
-    /// However we do not test if the queens are already in the vector,
-    /// the algorithm used is as fast as possible and checking for
-    /// already pushed queens would take too much time.
-    fn push_in_conflict_queens(&mut self, i: usize) {
-        let mut conflict: bool = false;
-
-        for j in 0..i {
-            if i.abs_diff(j) == self.queen[i].abs_diff(self.queen[j]) {
-                conflict = true;
-
-                self.conflict_queens.push(j);
-            }
-        }
-
-        if conflict {
-            self.conflict_queens.push(i);
-        }
     }
 
     /// @return true if there is a queen in one of the diags.
@@ -255,7 +235,7 @@ impl CheckerBoard {
     /// Get the number of conflicts.
     /// The algorithm ends when this number fall down to 0.
     fn get_conflicts(&self) -> usize {
-        self.conflict_prim_diags.len() + self.conflict_sec_diags.len()
+        self.conflict_diags
     }
 
     /// Place queen i in column j.
@@ -267,11 +247,11 @@ impl CheckerBoard {
         self.sec_diag[x] += 1;
 
         if self.prim_diag[i + j] == 2 {
-            self.conflict_prim_diags.insert(i + j);
+            self.conflict_diags += 1;
         }
 
         if self.sec_diag[x] == 2 {
-            self.conflict_sec_diags.insert(x);
+            self.conflict_diags += 1;
         }
     }
 
@@ -284,11 +264,11 @@ impl CheckerBoard {
         self.sec_diag[x] -= 1;
 
         if self.prim_diag[i + j] == 1 {
-            self.conflict_prim_diags.remove(&(i + j));
+            self.conflict_diags -= 1;
         }
 
         if self.sec_diag[x] == 1 {
-            self.conflict_sec_diags.remove(&x);
+            self.conflict_diags -= 1;
         }
     }
 
@@ -311,13 +291,23 @@ impl CheckerBoard {
         self.place_queen(j, qic);
     }
 
+    /// Check the solution from scratch, without trusting the counters
+    /// updated during the search: one queen per column and per diagonal.
     pub fn is_correct(&self) -> bool {
-        for i in 0..self.n {
-            for j in (i + 1)..self.n {
-                if i.abs_diff(j) == self.queen[i].abs_diff(self.queen[j]) {
-                    return false;
-                }
+        let mut used_cols = vec![false; self.n];
+        let mut used_prim_diags = vec![false; 2 * self.n];
+        let mut used_sec_diags = vec![false; 2 * self.n];
+
+        for (i, &j) in self.queen.iter().enumerate() {
+            let x = i + self.n - j;
+
+            if used_cols[j] || used_prim_diags[i + j] || used_sec_diags[x] {
+                return false;
             }
+
+            used_cols[j] = true;
+            used_prim_diags[i + j] = true;
+            used_sec_diags[x] = true;
         }
 
         true
@@ -361,15 +351,17 @@ impl CheckerBoard {
 mod tests {
     use super::*;
 
+    const SEED: u64 = 42;
+
     fn solves(n: usize) -> bool {
-        let mut cb = CheckerBoard::new(n);
+        let mut cb = CheckerBoard::new(n, SEED);
         cb.solve();
         cb.is_correct()
     }
 
     #[test]
     fn solves_a_single_queen_without_any_work() {
-        let mut cb = CheckerBoard::new(1);
+        let mut cb = CheckerBoard::new(1, SEED);
         let stats = cb.solve();
 
         assert!(cb.is_correct());
@@ -381,7 +373,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "no solution for 3 queens")]
     fn refuses_a_size_without_solution() {
-        CheckerBoard::new(3);
+        CheckerBoard::new(3, SEED);
     }
 
     #[test]
@@ -393,6 +385,27 @@ mod tests {
             "{} sizes out of 97 not solved: {failures:?}",
             failures.len()
         );
+    }
+
+    #[test]
+    fn same_seed_gives_same_solution() {
+        let mut a = CheckerBoard::new(1_000, SEED);
+        let mut b = CheckerBoard::new(1_000, SEED);
+        a.solve();
+        b.solve();
+
+        assert_eq!(a.queen, b.queen);
+    }
+
+    #[test]
+    fn detects_an_incorrect_solution() {
+        let mut cb = CheckerBoard::new(4, SEED);
+        cb.solve();
+        assert!(cb.is_correct());
+
+        // Two queens on the same column.
+        cb.queen[1] = cb.queen[0];
+        assert!(!cb.is_correct());
     }
 
     #[test]

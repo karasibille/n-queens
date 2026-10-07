@@ -18,9 +18,13 @@ struct Args {
     #[arg(short, long)]
     verbose: bool,
 
-    /// Check if the solution found is correct or not. Warning: this is a very slow operation.
+    /// Check if the solution found is correct or not.
     #[arg(short, long)]
     check: bool,
+
+    /// Seed of the random generator, to reproduce a run (random by default).
+    #[arg(short, long)]
+    seed: Option<u64>,
 }
 
 /// Parse the number of queens, rejecting the sizes that have no solution.
@@ -39,10 +43,13 @@ fn main() {
     let args = Args::parse();
     let n = args.size.get();
 
-    let mut cb = CheckerBoard::new(n);
+    let seed = args.seed.unwrap_or_else(rand::random);
+
+    let mut cb = CheckerBoard::new(n, seed);
     let stats = cb.solve();
 
     if args.verbose {
+        println!("Seed: {seed}");
         println!("Restarts: {}", stats.restarts);
         println!(
             "Average number of random draws per queen: {:.2}",
