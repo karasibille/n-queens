@@ -1,12 +1,11 @@
-extern crate rand;
-extern crate num;
-
-use self::rand::Rng;
 use std::collections::BTreeSet;
 
 pub struct CheckerBoard {
     n: usize,
-    c: usize,
+
+    /// Number of queens that will be kept in conflict during init().
+    nb_init_conflicts: usize,
+
     /// This will hold the queens positions.
     /// Index is the queen number, value is the queen column.
     queen: Vec<usize>,
@@ -14,67 +13,48 @@ pub struct CheckerBoard {
     /// This will hold the queens that are in conflicts.
     conflict_queens: Vec<usize>,
 
-    /// Diags are Array, but siez isn't known so we use vectors.
+    /// Diags are arrays, but their size isn't known at compile time so we use vectors.
     prim_diag: Vec<u8>,
     sec_diag: Vec<u8>,
 
-    /// Sets that will keep the diagonals that have more than 1 queen un it.
-    /// This will represents the number of confilcts in our checkerboard.
+    /// Sets that will keep the diagonals that have more than 1 queen in it.
+    /// This will represent the number of conflicts in our checkerboard.
     conflict_prim_diags: BTreeSet<usize>,
     conflict_sec_diags: BTreeSet<usize>,
 
     /// free_cols is a vector that will keep the columns that have no queens in it.
-    /// It's created with a capacity of n.
-    /// But the size can be reduced during initialisation and fall down to 0.
+    /// It's created with all the n columns,
+    /// but the size is reduced during initialisation and falls down to 0.
     free_cols: Vec<usize>,
 }
 
 impl CheckerBoard {
     /// Create a new checkerboard,
-    /// and make all possibe alocations and emset to 0.
+    /// and make all possible allocations and set them to 0.
     pub fn new(n: usize) -> CheckerBoard {
-        let mut cb = CheckerBoard {
-            n: n,
-            c: 0,
-            queen: Vec::with_capacity(n),
-            conflict_queens: Vec::new(),
-            prim_diag: Vec::with_capacity(2 * n),
-            sec_diag: Vec::with_capacity(2 * n),
-            conflict_prim_diags: BTreeSet::new(),
-            conflict_sec_diags: BTreeSet::new(),
-            free_cols: Vec::with_capacity(n),
-        };
-
-        for _ in 0..cb.queen.capacity() {
-            cb.queen.push(0);
-        }
-
-
-        // Set the number of queen that will be kept in conflict during init().
-        cb.c = match cb.n {
-            r @ 4...10 => r,
-            r @ 10...100 => r / 2,
-            100...1000 => 30,
-            1000...100000 => 50,
-            100000...1000000 => 80,
+        let nb_init_conflicts = match n {
+            4..=10 => n,
+            11..=100 => n / 2,
+            101..=1_000 => 30,
+            1_001..=100_000 => 50,
+            100_001..=1_000_000 => 80,
             _ => 100,
         };
 
-        // Reserve some space for the queens that will be kept in confilct during initialisation.
-        cb.conflict_queens.reserve(2 * cb.c);
-
-        // At first all diagonals contains 0 queens.
-        for _ in 0..cb.prim_diag.capacity() {
-            cb.prim_diag.push(0);
-            cb.sec_diag.push(0);
+        CheckerBoard {
+            n,
+            nb_init_conflicts,
+            queen: vec![0; n],
+            // Reserve some space for the queens that will be kept in conflict during initialisation.
+            conflict_queens: Vec::with_capacity(2 * nb_init_conflicts),
+            // At first all diagonals contain 0 queens.
+            prim_diag: vec![0; 2 * n],
+            sec_diag: vec![0; 2 * n],
+            conflict_prim_diags: BTreeSet::new(),
+            conflict_sec_diags: BTreeSet::new(),
+            // At first all columns are free.
+            free_cols: (0..n).collect(),
         }
-
-        // At first all columns are free.
-        for i in 0..cb.free_cols.capacity() {
-            cb.free_cols.push(i);
-        }
-
-        cb
     }
 
     pub fn solve(&mut self) {
@@ -82,8 +62,8 @@ impl CheckerBoard {
         self.local_search();
     }
 
-    /// This methods will try de place a maximum number of queens without confilct,
-    /// and then leave the placement of the queens tha are in conflict to the algorithme.
+    /// This method will try to place a maximum number of queens without conflict,
+    /// and then leave the placement of the queens that are in conflict to the algorithm.
     fn init(&mut self) {
         let mut nb_rand: usize = 0;
 
@@ -91,7 +71,7 @@ impl CheckerBoard {
         self.place_queen(0, rfc);
         self.pop_last_free_col();
 
-        for i in 1..self.queen.capacity() {
+        for i in 1..self.n {
             let mut conflict: bool = true;
 
             while conflict {
@@ -100,7 +80,7 @@ impl CheckerBoard {
 
                 conflict = self.check_queen(i, rfc);
 
-                if i < self.n - self.c {
+                if i < self.n - self.nb_init_conflicts {
                     if !conflict {
                         self.place_queen(i, rfc);
                         self.pop_last_free_col();
@@ -114,34 +94,33 @@ impl CheckerBoard {
             }
         }
 
-        println!("Average number of random : {}.",
-                 nb_rand as f64 / self.queen.capacity() as f64);
+        println!(
+            "Average number of random : {}.",
+            nb_rand as f64 / self.n as f64
+        );
         println!("Number of conflict after init : {}.", self.get_conflicts());
     }
 
     fn local_search(&mut self) -> bool {
-
         let mut nb_loop_with_same_conflict: usize = 0;
         let max_loop_with_same_conflict: usize = 4;
         let mut conflicts_prev_loop: usize = self.get_conflicts();
         let mut nb_swap: usize = 1;
         let mut conflicts: usize;
 
-
         // While we are not trapped (nb_swap != 0, i.e we have made some swap in the loop)
         // or the number of conflicts has not fall down to 0.
-        while nb_swap != 0 && conflicts_prev_loop != 0 &&
-              nb_loop_with_same_conflict < max_loop_with_same_conflict {
-
+        while nb_swap != 0
+            && conflicts_prev_loop != 0
+            && nb_loop_with_same_conflict < max_loop_with_same_conflict
+        {
             println!("There is : {} conflicts.", conflicts_prev_loop);
 
             for i in 0..self.conflict_queens.len() {
                 for j in (i + 1)..self.conflict_queens.len() {
-
                     let qi: usize = self.conflict_queens[i];
                     let qj: usize = self.conflict_queens[j];
                     if qi != qj && (self.queen_is_attacked(qi) || self.queen_is_attacked(qj)) {
-
                         let prev_conflicts: usize = self.get_conflicts();
                         self.swap_queens_columns(qi, qj);
 
@@ -164,11 +143,7 @@ impl CheckerBoard {
 
         println!("Nb swap made : {}.", nb_swap);
 
-        if self.get_conflicts() == 0 {
-            true
-        } else {
-            false
-        }
+        self.get_conflicts() == 0
     }
 
     /// Method that get a random free column,
@@ -176,7 +151,7 @@ impl CheckerBoard {
     /// have a O(1) random pop (with pop_last_free_col method).
     fn get_rand_free_col(&mut self) -> usize {
         let len = self.free_cols.len();
-        let random = rand::thread_rng().gen_range(0, len);
+        let random = rand::random_range(0..len);
 
         self.free_cols.swap(random, len - 1);
 
@@ -191,14 +166,13 @@ impl CheckerBoard {
     /// This method push a new queen in the conflict queens array.
     /// We also add all the queens that are in conflict with it.
     /// However we do not test if the queens are already in the vector,
-    /// the algorithme used is as fast as possible and checking for
-    /// already pushed queens will take to much time.
+    /// the algorithm used is as fast as possible and checking for
+    /// already pushed queens would take too much time.
     fn push_in_conflict_queens(&mut self, i: usize) {
         let mut conflict: bool = false;
 
-        for j in 0usize..i {
-            if num::abs(i as isize - j as isize) ==
-               num::abs(self.queen[i] as isize - self.queen[j] as isize) {
+        for j in 0..i {
+            if i.abs_diff(j) == self.queen[i].abs_diff(self.queen[j]) {
                 conflict = true;
 
                 self.conflict_queens.push(j);
@@ -218,7 +192,7 @@ impl CheckerBoard {
     }
 
     /// Get the number of conflicts.
-    /// The algorithme end when this number fall down to 0.
+    /// The algorithm ends when this number fall down to 0.
     fn get_conflicts(&self) -> usize {
         self.conflict_prim_diags.len() + self.conflict_sec_diags.len()
     }
@@ -240,7 +214,7 @@ impl CheckerBoard {
         }
     }
 
-    /// Remove the queen i from is column.
+    /// Remove the queen i from its column.
     fn remove_queen(&mut self, i: usize) {
         let j: usize = self.queen[i];
         let x: usize = (i as isize - j as isize + self.n as isize) as usize;
@@ -253,7 +227,7 @@ impl CheckerBoard {
         }
 
         if self.sec_diag[x] == 1 {
-            self.conflict_sec_diags.remove(&(x));
+            self.conflict_sec_diags.remove(&x);
         }
     }
 
@@ -276,11 +250,10 @@ impl CheckerBoard {
         self.place_queen(j, qic);
     }
 
-    pub fn is_correct(&mut self) -> bool {
+    pub fn is_correct(&self) -> bool {
         for i in 0..self.n {
             for j in (i + 1)..self.n {
-                if num::abs(i as isize - j as isize) ==
-                   num::abs(self.queen[i] as isize - self.queen[j] as isize) {
+                if i.abs_diff(j) == self.queen[i].abs_diff(self.queen[j]) {
                     return false;
                 }
             }
@@ -295,7 +268,7 @@ impl CheckerBoard {
         for _ in 0..self.n {
             print!("-+");
         }
-        println!("");
+        println!();
 
         for i in 0..self.n {
             print!("|");
@@ -306,13 +279,13 @@ impl CheckerBoard {
                     print!(" |");
                 }
             }
-            println!("");
+            println!();
 
             print!("+");
             for _ in 0..self.n {
                 print!("-+");
             }
-            println!("");
+            println!();
         }
     }
 

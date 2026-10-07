@@ -2,9 +2,10 @@
 name = "n_queens_problem"
 version = "1.0.0"
 authors = ["Kára <contact@kára.me>"]
+edition = "2024"
 
 [dependencies]
-rand = "0.3.14"
-num = "0.1.32"
-getopts = "0.2.14"
-term  = "0.4.4"
+anstream = "1.0.0"
+anstyle = "1.0.14"
+clap = { version = "4.6.7", features = ["derive"] }
+rand = "0.10.3"
