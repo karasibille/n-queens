@@ -1,3 +1,5 @@
+use std::io::{self, Write};
+
 use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
 
@@ -313,37 +315,31 @@ impl CheckerBoard {
         true
     }
 
-    /// Print the checkerboard as a checkerboard.
-    pub fn print_checkerboard(&self) {
-        print!("+");
-        for _ in 0..self.n {
-            print!("-+");
-        }
-        println!();
+    /// Write the checkerboard as a drawing, one row per queen.
+    pub fn write_checkerboard(&self, out: &mut impl Write) -> io::Result<()> {
+        let border = format!("+{}", "-+".repeat(self.n));
 
-        for i in 0..self.n {
-            print!("|");
+        writeln!(out, "{border}")?;
+
+        for &col in &self.queen {
+            write!(out, "|")?;
             for j in 0..self.n {
-                if self.queen[i] == j {
-                    print!("o|");
-                } else {
-                    print!(" |");
-                }
+                write!(out, "{}|", if col == j { 'o' } else { ' ' })?;
             }
-            println!();
-
-            print!("+");
-            for _ in 0..self.n {
-                print!("-+");
-            }
-            println!();
+            writeln!(out)?;
+            writeln!(out, "{border}")?;
         }
+
+        Ok(())
     }
 
-    pub fn print_checkerboard_as_list(&self) {
-        for i in 0..self.n {
-            println!("Queen[{}] => {}", i + 1, self.queen[i] + 1);
+    /// Write the checkerboard as a list of columns, one line per queen.
+    pub fn write_checkerboard_as_list(&self, out: &mut impl Write) -> io::Result<()> {
+        for (i, &col) in self.queen.iter().enumerate() {
+            writeln!(out, "Queen[{}] => {}", i + 1, col + 1)?;
         }
+
+        Ok(())
     }
 }
 
@@ -406,6 +402,31 @@ mod tests {
         // Two queens on the same column.
         cb.queen[1] = cb.queen[0];
         assert!(!cb.is_correct());
+    }
+
+    #[test]
+    fn writes_the_checkerboard_with_one_queen_per_row() {
+        let mut cb = CheckerBoard::new(4, SEED);
+        cb.solve();
+
+        let mut out = Vec::new();
+        cb.write_checkerboard(&mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+
+        // A border line, then a row and a border line per queen.
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 9);
+        assert_eq!(lines[0], "+-+-+-+-+");
+        for (i, row) in lines.iter().skip(1).step_by(2).enumerate() {
+            assert_eq!(row.len(), 9, "row {i}: {row}");
+            assert_eq!(row.matches('o').count(), 1, "row {i}: {row}");
+        }
+
+        let mut out = Vec::new();
+        cb.write_checkerboard_as_list(&mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(text.lines().count(), 4);
+        assert!(text.starts_with("Queen[1] => "));
     }
 
     #[test]

@@ -1,6 +1,8 @@
 mod checker_board;
 
+use std::io::{self, BufWriter, ErrorKind, Write};
 use std::num::NonZeroUsize;
+use std::process::ExitCode;
 
 use anstyle::{AnsiColor, Style};
 use checker_board::CheckerBoard;
@@ -39,39 +41,59 @@ fn parse_size(arg: &str) -> Result<NonZeroUsize, String> {
 }
 
 /// Main Function.
-fn main() {
+fn main() -> ExitCode {
     let args = Args::parse();
-    let n = args.size.get();
 
+    match run(&args) {
+        Ok(()) => ExitCode::SUCCESS,
+        // The reader closed the pipe early (e.g. `| head`): nothing is wrong.
+        Err(e) if e.kind() == ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Solve and write the results to stdout, through a single buffered writer
+/// so that the output is written in large chunks and I/O errors are reported.
+fn run(args: &Args) -> io::Result<()> {
+    let n = args.size.get();
     let seed = args.seed.unwrap_or_else(rand::random);
 
     let mut cb = CheckerBoard::new(n, seed);
     let stats = cb.solve();
 
+    let stdout = anstream::stdout();
+    let mut out = BufWriter::new(stdout.lock());
+
     if args.verbose {
-        println!("Seed: {seed}");
-        println!("Restarts: {}", stats.restarts);
-        println!(
+        writeln!(out, "Seed: {seed}")?;
+        writeln!(out, "Restarts: {}", stats.restarts)?;
+        writeln!(
+            out,
             "Average number of random draws per queen: {:.2}",
             stats.avg_random_draws
-        );
-        println!("Conflicts after init: {}", stats.conflicts_after_init);
-        println!("Swaps made: {}", stats.swaps);
+        )?;
+        writeln!(out, "Conflicts after init: {}", stats.conflicts_after_init)?;
+        writeln!(out, "Swaps made: {}", stats.swaps)?;
 
         if n <= 50 {
-            cb.print_checkerboard();
+            cb.write_checkerboard(&mut out)?;
         } else {
-            cb.print_checkerboard_as_list();
+            cb.write_checkerboard_as_list(&mut out)?;
         }
     }
 
     if args.check {
         if cb.is_correct() {
             let green = Style::new().fg_color(Some(AnsiColor::Green.into()));
-            anstream::println!("{green}The solution is CORRECT !{green:#}");
+            writeln!(out, "{green}The solution is CORRECT !{green:#}")?;
         } else {
             let red = Style::new().fg_color(Some(AnsiColor::Red.into()));
-            anstream::println!("{red}The solution is not correct !{red:#}");
+            writeln!(out, "{red}The solution is not correct !{red:#}")?;
         }
     }
+
+    out.flush()
 }
