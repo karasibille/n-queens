@@ -1,12 +1,10 @@
-mod checker_board;
-
 use std::io::{self, BufWriter, ErrorKind, Write};
 use std::num::NonZeroUsize;
 use std::process::ExitCode;
 
 use anstyle::{AnsiColor, Style};
-use checker_board::CheckerBoard;
 use clap::Parser;
+use n_queens_problem::{Solver, has_solution};
 
 /// Rust implementation of the N Queens Problem.
 #[derive(Parser)]
@@ -33,7 +31,7 @@ struct Args {
 fn parse_size(arg: &str) -> Result<NonZeroUsize, String> {
     let n: NonZeroUsize = arg.parse().map_err(|e| format!("{e}"))?;
 
-    if CheckerBoard::has_solution(n.get()) {
+    if has_solution(n.get()) {
         Ok(n)
     } else {
         Err(format!("there is no solution for {n} queens"))
@@ -61,8 +59,7 @@ fn run(args: &Args) -> io::Result<()> {
     let n = args.size.get();
     let seed = args.seed.unwrap_or_else(rand::random);
 
-    let mut cb = CheckerBoard::new(n, seed);
-    let stats = cb.solve();
+    let (solution, stats) = Solver::new(n, seed).solve();
 
     let stdout = anstream::stdout();
     let mut out = BufWriter::new(stdout.lock());
@@ -79,14 +76,14 @@ fn run(args: &Args) -> io::Result<()> {
         writeln!(out, "Swaps made: {}", stats.swaps)?;
 
         if n <= 50 {
-            cb.write_checkerboard(&mut out)?;
+            solution.write_board(&mut out)?;
         } else {
-            cb.write_checkerboard_as_list(&mut out)?;
+            solution.write_list(&mut out)?;
         }
     }
 
     if args.check {
-        if cb.is_correct() {
+        if solution.is_correct() {
             let green = Style::new().fg_color(Some(AnsiColor::Green.into()));
             writeln!(out, "{green}The solution is CORRECT !{green:#}")?;
         } else {

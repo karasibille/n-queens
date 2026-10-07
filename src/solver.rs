@@ -1,7 +1,8 @@
-use std::io::{self, Write};
-
 use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
+
+use crate::Solution;
+use crate::has_solution;
 
 /// Statistics about a call to solve().
 /// Except for restarts, they describe the attempt that found the solution.
@@ -20,7 +21,9 @@ pub struct SolveStats {
     pub swaps: usize,
 }
 
-pub struct CheckerBoard {
+/// The search state: the queens being placed and everything needed to
+/// move them cheaply. solve() consumes it and returns the Solution.
+pub struct Solver {
     n: usize,
 
     /// Number of queens that will be kept in conflict during init().
@@ -49,13 +52,8 @@ pub struct CheckerBoard {
     rng: SmallRng,
 }
 
-impl CheckerBoard {
-    /// Return false for the sizes where no queens placement is possible.
-    pub fn has_solution(n: usize) -> bool {
-        !matches!(n, 0 | 2 | 3)
-    }
-
-    /// Create a new checkerboard,
+impl Solver {
+    /// Create a solver for n queens,
     /// and make all possible allocations and set them to 0.
     /// The same seed always gives the same solution.
     ///
@@ -63,8 +61,8 @@ impl CheckerBoard {
     ///
     /// Panics if there is no solution for n queens (see has_solution),
     /// since solve() would never end.
-    pub fn new(n: usize, seed: u64) -> CheckerBoard {
-        assert!(Self::has_solution(n), "there is no solution for {n} queens");
+    pub fn new(n: usize, seed: u64) -> Solver {
+        assert!(has_solution(n), "there is no solution for {n} queens");
 
         let nb_init_conflicts = match n {
             4..=10 => n,
@@ -75,7 +73,7 @@ impl CheckerBoard {
             _ => 100,
         };
 
-        CheckerBoard {
+        Solver {
             n,
             nb_init_conflicts,
             queen: vec![0; n],
@@ -92,7 +90,8 @@ impl CheckerBoard {
 
     /// Solve the problem, restarting from a new random placement
     /// each time the local search gets trapped.
-    pub fn solve(&mut self) -> SolveStats {
+    /// The solver is consumed: its queens become the solution.
+    pub fn solve(mut self) -> (Solution, SolveStats) {
         let mut restarts = 0;
 
         loop {
@@ -101,12 +100,14 @@ impl CheckerBoard {
             let (solved, swaps) = self.local_search();
 
             if solved {
-                return SolveStats {
+                let stats = SolveStats {
                     restarts,
                     avg_tries: tries as f64 / self.n as f64,
                     conflicts_after_init,
                     swaps,
                 };
+
+                return (Solution::new(self.queen), stats);
             }
 
             restarts += 1;
@@ -114,7 +115,7 @@ impl CheckerBoard {
         }
     }
 
-    /// Put the checkerboard back in the state it had after new().
+    /// Put the solver back in the state it had after new().
     fn reset(&mut self) {
         self.queen.fill(0);
         self.conflict_queens.clear();
@@ -350,55 +351,6 @@ impl CheckerBoard {
         self.place_queen(i, qjc);
         self.place_queen(j, qic);
     }
-
-    /// Check the solution from scratch, without trusting the counters
-    /// updated during the search: one queen per column and per diagonal.
-    pub fn is_correct(&self) -> bool {
-        let mut used_cols = vec![false; self.n];
-        let mut used_prim_diags = vec![false; 2 * self.n];
-        let mut used_sec_diags = vec![false; 2 * self.n];
-
-        for (i, &j) in self.queen.iter().enumerate() {
-            let x = i + self.n - j;
-
-            if used_cols[j] || used_prim_diags[i + j] || used_sec_diags[x] {
-                return false;
-            }
-
-            used_cols[j] = true;
-            used_prim_diags[i + j] = true;
-            used_sec_diags[x] = true;
-        }
-
-        true
-    }
-
-    /// Write the checkerboard as a drawing, one row per queen.
-    pub fn write_checkerboard(&self, out: &mut impl Write) -> io::Result<()> {
-        let border = format!("+{}", "-+".repeat(self.n));
-
-        writeln!(out, "{border}")?;
-
-        for &col in &self.queen {
-            write!(out, "|")?;
-            for j in 0..self.n {
-                write!(out, "{}|", if col == j { 'o' } else { ' ' })?;
-            }
-            writeln!(out)?;
-            writeln!(out, "{border}")?;
-        }
-
-        Ok(())
-    }
-
-    /// Write the checkerboard as a list of columns, one line per queen.
-    pub fn write_checkerboard_as_list(&self, out: &mut impl Write) -> io::Result<()> {
-        for (i, &col) in self.queen.iter().enumerate() {
-            writeln!(out, "Queen[{}] => {}", i + 1, col + 1)?;
-        }
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -408,17 +360,15 @@ mod tests {
     const SEED: u64 = 42;
 
     fn solves(n: usize) -> bool {
-        let mut cb = CheckerBoard::new(n, SEED);
-        cb.solve();
-        cb.is_correct()
+        let (solution, _) = Solver::new(n, SEED).solve();
+        solution.is_correct()
     }
 
     #[test]
     fn solves_a_single_queen_without_any_work() {
-        let mut cb = CheckerBoard::new(1, SEED);
-        let stats = cb.solve();
+        let (solution, stats) = Solver::new(1, SEED).solve();
 
-        assert!(cb.is_correct());
+        assert!(solution.is_correct());
         assert_eq!(stats.restarts, 0);
         assert_eq!(stats.conflicts_after_init, 0);
         assert_eq!(stats.swaps, 0);
@@ -427,7 +377,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "no solution for 3 queens")]
     fn refuses_a_size_without_solution() {
-        CheckerBoard::new(3, SEED);
+        Solver::new(3, SEED);
     }
 
     #[test]
@@ -443,48 +393,10 @@ mod tests {
 
     #[test]
     fn same_seed_gives_same_solution() {
-        let mut a = CheckerBoard::new(1_000, SEED);
-        let mut b = CheckerBoard::new(1_000, SEED);
-        a.solve();
-        b.solve();
+        let (a, _) = Solver::new(1_000, SEED).solve();
+        let (b, _) = Solver::new(1_000, SEED).solve();
 
-        assert_eq!(a.queen, b.queen);
-    }
-
-    #[test]
-    fn detects_an_incorrect_solution() {
-        let mut cb = CheckerBoard::new(4, SEED);
-        cb.solve();
-        assert!(cb.is_correct());
-
-        // Two queens on the same column.
-        cb.queen[1] = cb.queen[0];
-        assert!(!cb.is_correct());
-    }
-
-    #[test]
-    fn writes_the_checkerboard_with_one_queen_per_row() {
-        let mut cb = CheckerBoard::new(4, SEED);
-        cb.solve();
-
-        let mut out = Vec::new();
-        cb.write_checkerboard(&mut out).unwrap();
-        let text = String::from_utf8(out).unwrap();
-
-        // A border line, then a row and a border line per queen.
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 9);
-        assert_eq!(lines[0], "+-+-+-+-+");
-        for (i, row) in lines.iter().skip(1).step_by(2).enumerate() {
-            assert_eq!(row.len(), 9, "row {i}: {row}");
-            assert_eq!(row.matches('o').count(), 1, "row {i}: {row}");
-        }
-
-        let mut out = Vec::new();
-        cb.write_checkerboard_as_list(&mut out).unwrap();
-        let text = String::from_utf8(out).unwrap();
-        assert_eq!(text.lines().count(), 4);
-        assert!(text.starts_with("Queen[1] => "));
+        assert_eq!(a.queens(), b.queens());
     }
 
     #[test]
@@ -493,8 +405,7 @@ mod tests {
 
         for n in 8..=20 {
             for seed in 1..=10 {
-                let mut cb = CheckerBoard::new(n, seed);
-                restarts += cb.solve().restarts;
+                restarts += Solver::new(n, seed).solve().1.restarts;
             }
         }
 
