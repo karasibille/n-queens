@@ -40,9 +40,17 @@ fn main() {
     let n = args.size.get();
 
     let mut cb = CheckerBoard::new(n);
-    cb.solve();
+    let stats = cb.solve();
 
     if args.verbose {
+        println!("Restarts: {}", stats.restarts);
+        println!(
+            "Average number of random draws per queen: {:.2}",
+            stats.avg_random_draws
+        );
+        println!("Conflicts after init: {}", stats.conflicts_after_init);
+        println!("Swaps made: {}", stats.swaps);
+
         if n <= 50 {
             cb.print_checkerboard();
         } else {

@@ -1,5 +1,22 @@
 use std::collections::BTreeSet;
 
+/// Statistics about a call to solve().
+/// Except for restarts, they describe the attempt that found the solution.
+#[derive(Debug)]
+pub struct SolveStats {
+    /// Number of times the search restarted from a new random placement.
+    pub restarts: usize,
+
+    /// Average number of random columns drawn per queen during init().
+    pub avg_random_draws: f64,
+
+    /// Number of conflicts left by init().
+    pub conflicts_after_init: usize,
+
+    /// Number of swaps made by the local search.
+    pub swaps: usize,
+}
+
 pub struct CheckerBoard {
     n: usize,
 
@@ -71,13 +88,24 @@ impl CheckerBoard {
 
     /// Solve the problem, restarting from a new random placement
     /// each time the local search gets trapped.
-    pub fn solve(&mut self) {
+    pub fn solve(&mut self) -> SolveStats {
+        let mut restarts = 0;
+
         loop {
-            self.init();
-            if self.local_search() {
-                return;
+            let random_draws = self.init();
+            let conflicts_after_init = self.get_conflicts();
+            let (solved, swaps) = self.local_search();
+
+            if solved {
+                return SolveStats {
+                    restarts,
+                    avg_random_draws: random_draws as f64 / self.n as f64,
+                    conflicts_after_init,
+                    swaps,
+                };
             }
-            println!("No solution found, restarting.");
+
+            restarts += 1;
             self.reset();
         }
     }
@@ -96,7 +124,8 @@ impl CheckerBoard {
 
     /// This method will try to place a maximum number of queens without conflict,
     /// and then leave the placement of the queens that are in conflict to the algorithm.
-    fn init(&mut self) {
+    /// Return the number of random columns drawn.
+    fn init(&mut self) -> usize {
         // Number of random columns tried for a queen before accepting a conflict,
         // so that we never loop forever when all the free columns are attacked.
         const MAX_TRIES: usize = 100;
@@ -127,25 +156,20 @@ impl CheckerBoard {
             }
         }
 
-        println!(
-            "Average number of random : {}.",
-            nb_rand as f64 / self.n as f64
-        );
-        println!("Number of conflict after init : {}.", self.get_conflicts());
+        nb_rand
     }
 
     /// Swap the columns of queens in conflict as long as it doesn't increase
     /// the number of conflicts.
-    /// Return true if a solution was found, false if we are trapped.
-    fn local_search(&mut self) -> bool {
+    /// Return whether a solution was found (false if we are trapped),
+    /// and the number of swaps made.
+    fn local_search(&mut self) -> (bool, usize) {
         let max_loop_with_same_conflict: usize = 4;
         let mut nb_loop_with_same_conflict: usize = 0;
         let mut conflicts: usize = self.get_conflicts();
         let mut nb_swap: usize = 0;
 
         while conflicts != 0 && nb_loop_with_same_conflict < max_loop_with_same_conflict {
-            println!("There is : {} conflicts.", conflicts);
-
             let mut nb_swap_in_loop: usize = 0;
 
             for i in 0..self.conflict_queens.len() {
@@ -180,9 +204,7 @@ impl CheckerBoard {
             conflicts = new_conflicts;
         }
 
-        println!("Nb swap made : {}.", nb_swap);
-
-        conflicts == 0
+        (conflicts == 0, nb_swap)
     }
 
     /// Method that get a random free column,
@@ -346,8 +368,14 @@ mod tests {
     }
 
     #[test]
-    fn solves_a_single_queen() {
-        assert!(solves(1));
+    fn solves_a_single_queen_without_any_work() {
+        let mut cb = CheckerBoard::new(1);
+        let stats = cb.solve();
+
+        assert!(cb.is_correct());
+        assert_eq!(stats.restarts, 0);
+        assert_eq!(stats.conflicts_after_init, 0);
+        assert_eq!(stats.swaps, 0);
     }
 
     #[test]
