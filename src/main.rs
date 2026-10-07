@@ -72,8 +72,8 @@ fn run(args: &Args) -> io::Result<()> {
         writeln!(out, "Restarts: {}", stats.restarts)?;
         writeln!(
             out,
-            "Average number of random draws per queen: {:.2}",
-            stats.avg_random_draws
+            "Average number of columns tried per queen: {:.2}",
+            stats.avg_tries
         )?;
         writeln!(out, "Conflicts after init: {}", stats.conflicts_after_init)?;
         writeln!(out, "Swaps made: {}", stats.swaps)?;

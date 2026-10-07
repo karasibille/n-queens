@@ -10,8 +10,8 @@ pub struct SolveStats {
     /// Number of times the search restarted from a new random placement.
     pub restarts: usize,
 
-    /// Average number of random columns drawn per queen during init().
-    pub avg_random_draws: f64,
+    /// Average number of free columns tried per queen during init().
+    pub avg_tries: f64,
 
     /// Number of conflicts left by init().
     pub conflicts_after_init: usize,
@@ -41,9 +41,8 @@ pub struct CheckerBoard {
     /// This represents the number of conflicts in our checkerboard.
     conflict_diags: usize,
 
-    /// free_cols is a vector that will keep the columns that have no queens in it.
-    /// It's created with all the n columns,
-    /// but the size is reduced during initialisation and falls down to 0.
+    /// The columns that have no queen yet. It starts with all the n columns,
+    /// and init() empties it.
     free_cols: Vec<usize>,
 
     /// Random generator, seeded so that a run can be reproduced.
@@ -97,14 +96,14 @@ impl CheckerBoard {
         let mut restarts = 0;
 
         loop {
-            let random_draws = self.init();
+            let tries = self.init();
             let conflicts_after_init = self.get_conflicts();
             let (solved, swaps) = self.local_search();
 
             if solved {
                 return SolveStats {
                     restarts,
-                    avg_random_draws: random_draws as f64 / self.n as f64,
+                    avg_tries: tries as f64 / self.n as f64,
                     conflicts_after_init,
                     swaps,
                 };
@@ -128,30 +127,35 @@ impl CheckerBoard {
 
     /// This method will try to place a maximum number of queens without conflict,
     /// and then leave the placement of the queens that are in conflict to the algorithm.
-    /// Return the number of random columns drawn.
+    /// Return the number of free columns tried.
+    ///
+    /// For each queen, one random position is drawn in free_cols, and the
+    /// columns are then tried one after the other from there: reading
+    /// consecutive entries is much cheaper than one random entry per try,
+    /// since free_cols is far larger than the CPU cache for the big sizes.
+    /// The entries of free_cols are in a random order (see take_free_col),
+    /// so consecutive entries are still random columns.
     fn init(&mut self) -> usize {
-        // Number of random columns tried for a queen before accepting a conflict,
+        // Number of free columns tried for a queen before accepting a conflict,
         // so that we never loop forever when all the free columns are attacked.
         const MAX_TRIES: usize = 100;
 
-        let mut nb_rand: usize = 0;
-
-        let rfc: usize = self.get_rand_free_col();
-        self.place_queen(0, rfc);
-        self.pop_last_free_col();
+        let mut nb_tries: usize = 0;
 
         let first_kept_in_conflict = self.n.saturating_sub(self.nb_init_conflicts);
 
-        for i in 1..self.n {
+        for i in 0..self.n {
+            let len = self.free_cols.len();
+            let start = self.rng.random_range(0..len);
+
             for tries in 1..=MAX_TRIES {
-                let rfc: usize = self.get_rand_free_col();
-                nb_rand += 1;
+                let r = (start + tries - 1) % len;
+                let col = self.free_cols[r];
+                nb_tries += 1;
 
-                let conflict = self.check_queen(i, rfc);
-
-                if !conflict || i >= first_kept_in_conflict || tries == MAX_TRIES {
-                    self.place_queen(i, rfc);
-                    self.pop_last_free_col();
+                if !self.check_queen(i, col) || i >= first_kept_in_conflict || tries == MAX_TRIES {
+                    self.take_free_col(r);
+                    self.place_queen(i, col);
                     break;
                 }
             }
@@ -159,7 +163,7 @@ impl CheckerBoard {
 
         self.conflict_queens = (0..self.n).filter(|&i| self.queen_is_attacked(i)).collect();
 
-        nb_rand
+        nb_tries
     }
 
     /// Swap the columns of queens in conflict as long as it doesn't increase
@@ -275,21 +279,10 @@ impl CheckerBoard {
         }
     }
 
-    /// Method that get a random free column,
-    /// by putting it at the end of the vector in order to
-    /// have a O(1) random pop (with pop_last_free_col method).
-    fn get_rand_free_col(&mut self) -> usize {
-        let len = self.free_cols.len();
-        let random = self.rng.random_range(0..len);
-
-        self.free_cols.swap(random, len - 1);
-
-        self.free_cols[len - 1]
-    }
-
-    /// This method is meant to be used after get_rand_free_col.
-    fn pop_last_free_col(&mut self) {
-        self.free_cols.pop();
+    /// Remove the entry r of free_cols in O(1), by moving the last entry
+    /// in its place. This is what shuffles free_cols during init().
+    fn take_free_col(&mut self, r: usize) {
+        self.free_cols.swap_remove(r);
     }
 
     /// @return true if there is a queen in one of the diags.
