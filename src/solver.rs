@@ -96,10 +96,8 @@ impl Solver {
 
         loop {
             let tries = self.init();
-            let conflicts_after_init = self.get_conflicts();
-            let (solved, swaps) = self.local_search();
-
-            if solved {
+            let conflicts_after_init = self.conflicts();
+            if let Some(swaps) = self.local_search() {
                 let stats = SolveStats {
                     restarts,
                     avg_tries: tries as f64 / self.n as f64,
@@ -154,7 +152,8 @@ impl Solver {
                 let col = self.free_cols[r];
                 nb_tries += 1;
 
-                if !self.check_queen(i, col) || i >= first_kept_in_conflict || tries == MAX_TRIES {
+                if !self.is_attacked_at(i, col) || i >= first_kept_in_conflict || tries == MAX_TRIES
+                {
                     self.take_free_col(r);
                     self.place_queen(i, col);
                     break;
@@ -162,20 +161,20 @@ impl Solver {
             }
         }
 
-        self.conflict_queens = (0..self.n).filter(|&i| self.queen_is_attacked(i)).collect();
+        self.conflict_queens = (0..self.n).filter(|&i| self.is_attacked(i)).collect();
 
         nb_tries
     }
 
     /// Swap the columns of queens in conflict as long as it doesn't increase
     /// the number of conflicts.
-    /// Return whether a solution was found (false if we are trapped),
-    /// and the number of swaps made.
-    fn local_search(&mut self) -> (bool, usize) {
+    /// Return the number of swaps made if a solution was found,
+    /// or None if the search got trapped.
+    fn local_search(&mut self) -> Option<usize> {
         const MAX_PASSES_WITHOUT_PROGRESS: usize = 16;
 
         let mut passes_without_progress: usize = 0;
-        let mut conflicts: usize = self.get_conflicts();
+        let mut conflicts: usize = self.conflicts();
         let mut nb_swap: usize = 0;
 
         while conflicts != 0 && passes_without_progress < MAX_PASSES_WITHOUT_PROGRESS {
@@ -183,7 +182,7 @@ impl Solver {
 
             // No swap, or swaps that only moved the conflicts around:
             // the queens of the set are not enough to solve them.
-            if self.get_conflicts() == conflicts {
+            if self.conflicts() == conflicts {
                 swaps_in_pass += self.escape();
             }
 
@@ -193,7 +192,7 @@ impl Solver {
             }
             nb_swap += swaps_in_pass;
 
-            let new_conflicts = self.get_conflicts();
+            let new_conflicts = self.conflicts();
             if new_conflicts == conflicts {
                 passes_without_progress += 1;
             } else {
@@ -202,7 +201,7 @@ impl Solver {
             conflicts = new_conflicts;
         }
 
-        (conflicts == 0, nb_swap)
+        (conflicts == 0).then_some(nb_swap)
     }
 
     /// Try to swap every pair of queens of conflict_queens where at least
@@ -216,9 +215,7 @@ impl Solver {
                 let qi: usize = self.conflict_queens[i];
                 let qj: usize = self.conflict_queens[j];
 
-                if (self.queen_is_attacked(qi) || self.queen_is_attacked(qj))
-                    && self.try_swap(qi, qj)
-                {
+                if (self.is_attacked(qi) || self.is_attacked(qj)) && self.try_swap(qi, qj) {
                     swaps += 1;
                 }
             }
@@ -236,7 +233,7 @@ impl Solver {
         const MAX_PARTNER_TRIES: usize = 32;
 
         for q in 0..self.n {
-            if self.queen_is_attacked(q) && !self.conflict_queens.contains(&q) {
+            if self.is_attacked(q) && !self.conflict_queens.contains(&q) {
                 self.conflict_queens.push(q);
             }
         }
@@ -246,7 +243,7 @@ impl Solver {
         for k in 0..self.conflict_queens.len() {
             let qi = self.conflict_queens[k];
 
-            if !self.queen_is_attacked(qi) {
+            if !self.is_attacked(qi) {
                 continue;
             }
 
@@ -269,11 +266,11 @@ impl Solver {
     /// Swap the columns of two queens, and undo the swap if it increases
     /// the number of conflicts. Return whether the swap was kept.
     fn try_swap(&mut self, qi: usize, qj: usize) -> bool {
-        let prev_conflicts: usize = self.get_conflicts();
-        self.swap_queens_columns(qi, qj);
+        let prev_conflicts: usize = self.conflicts();
+        self.swap_columns(qi, qj);
 
-        if prev_conflicts < self.get_conflicts() {
-            self.swap_queens_columns(qi, qj);
+        if prev_conflicts < self.conflicts() {
+            self.swap_columns(qi, qj);
             false
         } else {
             true
@@ -286,8 +283,9 @@ impl Solver {
         self.free_cols.swap_remove(r);
     }
 
-    /// @return true if there is a queen in one of the diags.
-    fn check_queen(&self, i: usize, j: usize) -> bool {
+    /// Return true if a queen placed on row i, column j would be attacked
+    /// through one of its two diagonals.
+    fn is_attacked_at(&self, i: usize, j: usize) -> bool {
         let x: usize = (i as isize - j as isize + self.n as isize) as usize;
 
         self.prim_diag[i + j] > 0 || self.sec_diag[x] > 0
@@ -295,7 +293,7 @@ impl Solver {
 
     /// Get the number of conflicts.
     /// The algorithm ends when this number fall down to 0.
-    fn get_conflicts(&self) -> usize {
+    fn conflicts(&self) -> usize {
         self.conflict_diags
     }
 
@@ -333,8 +331,8 @@ impl Solver {
         }
     }
 
-    /// Return true if a queen has conflicts, and false otherwise.
-    fn queen_is_attacked(&self, i: usize) -> bool {
+    /// Return true if the queen on row i is attacked by another queen.
+    fn is_attacked(&self, i: usize) -> bool {
         let j: usize = self.queen[i];
         let x: usize = (i as isize - j as isize + self.n as isize) as usize;
 
@@ -342,7 +340,7 @@ impl Solver {
     }
 
     /// Swap the columns of the two given queens.
-    fn swap_queens_columns(&mut self, i: usize, j: usize) {
+    fn swap_columns(&mut self, i: usize, j: usize) {
         let qic = self.queen[i];
         let qjc = self.queen[j];
 
