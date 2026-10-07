@@ -57,39 +57,60 @@ impl CheckerBoard {
         }
     }
 
+    /// Solve the problem, restarting from a new random placement
+    /// each time the local search gets trapped.
     pub fn solve(&mut self) {
-        self.init();
-        self.local_search();
+        loop {
+            self.init();
+            if self.local_search() {
+                return;
+            }
+            println!("No solution found, restarting.");
+            self.reset();
+        }
+    }
+
+    /// Put the checkerboard back in the state it had after new().
+    fn reset(&mut self) {
+        self.queen.fill(0);
+        self.conflict_queens.clear();
+        self.prim_diag.fill(0);
+        self.sec_diag.fill(0);
+        self.conflict_prim_diags.clear();
+        self.conflict_sec_diags.clear();
+        self.free_cols.clear();
+        self.free_cols.extend(0..self.n);
     }
 
     /// This method will try to place a maximum number of queens without conflict,
     /// and then leave the placement of the queens that are in conflict to the algorithm.
     fn init(&mut self) {
+        // Number of random columns tried for a queen before accepting a conflict,
+        // so that we never loop forever when all the free columns are attacked.
+        const MAX_TRIES: usize = 100;
+
         let mut nb_rand: usize = 0;
 
         let rfc: usize = self.get_rand_free_col();
         self.place_queen(0, rfc);
         self.pop_last_free_col();
 
-        for i in 1..self.n {
-            let mut conflict: bool = true;
+        let first_kept_in_conflict = self.n.saturating_sub(self.nb_init_conflicts);
 
-            while conflict {
+        for i in 1..self.n {
+            for tries in 1..=MAX_TRIES {
                 let rfc: usize = self.get_rand_free_col();
                 nb_rand += 1;
 
-                conflict = self.check_queen(i, rfc);
+                let conflict = self.check_queen(i, rfc);
 
-                if i < self.n - self.nb_init_conflicts {
-                    if !conflict {
-                        self.place_queen(i, rfc);
-                        self.pop_last_free_col();
-                    }
-                } else {
+                if !conflict || i >= first_kept_in_conflict || tries == MAX_TRIES {
                     self.place_queen(i, rfc);
                     self.pop_last_free_col();
-                    self.push_in_conflict_queens(i);
-                    conflict = false;
+                    if conflict {
+                        self.push_in_conflict_queens(i);
+                    }
+                    break;
                 }
             }
         }
@@ -101,20 +122,19 @@ impl CheckerBoard {
         println!("Number of conflict after init : {}.", self.get_conflicts());
     }
 
+    /// Swap the columns of queens in conflict as long as it doesn't increase
+    /// the number of conflicts.
+    /// Return true if a solution was found, false if we are trapped.
     fn local_search(&mut self) -> bool {
-        let mut nb_loop_with_same_conflict: usize = 0;
         let max_loop_with_same_conflict: usize = 4;
-        let mut conflicts_prev_loop: usize = self.get_conflicts();
-        let mut nb_swap: usize = 1;
-        let mut conflicts: usize;
+        let mut nb_loop_with_same_conflict: usize = 0;
+        let mut conflicts: usize = self.get_conflicts();
+        let mut nb_swap: usize = 0;
 
-        // While we are not trapped (nb_swap != 0, i.e we have made some swap in the loop)
-        // or the number of conflicts has not fall down to 0.
-        while nb_swap != 0
-            && conflicts_prev_loop != 0
-            && nb_loop_with_same_conflict < max_loop_with_same_conflict
-        {
-            println!("There is : {} conflicts.", conflicts_prev_loop);
+        while conflicts != 0 && nb_loop_with_same_conflict < max_loop_with_same_conflict {
+            println!("There is : {} conflicts.", conflicts);
+
+            let mut nb_swap_in_loop: usize = 0;
 
             for i in 0..self.conflict_queens.len() {
                 for j in (i + 1)..self.conflict_queens.len() {
@@ -124,26 +144,33 @@ impl CheckerBoard {
                         let prev_conflicts: usize = self.get_conflicts();
                         self.swap_queens_columns(qi, qj);
 
-                        conflicts = self.get_conflicts();
-                        if prev_conflicts < conflicts {
+                        if prev_conflicts < self.get_conflicts() {
                             self.swap_queens_columns(qi, qj);
                         } else {
-                            nb_swap += 1;
+                            nb_swap_in_loop += 1;
                         }
                     }
                 }
             }
 
-            conflicts = self.get_conflicts();
-            if conflicts_prev_loop == conflicts {
-                nb_loop_with_same_conflict += 1;
+            // No swap could be made: we are trapped.
+            if nb_swap_in_loop == 0 {
+                break;
             }
-            conflicts_prev_loop = conflicts;
+            nb_swap += nb_swap_in_loop;
+
+            let new_conflicts = self.get_conflicts();
+            if new_conflicts == conflicts {
+                nb_loop_with_same_conflict += 1;
+            } else {
+                nb_loop_with_same_conflict = 0;
+            }
+            conflicts = new_conflicts;
         }
 
         println!("Nb swap made : {}.", nb_swap);
 
-        self.get_conflicts() == 0
+        conflicts == 0
     }
 
     /// Method that get a random free column,
@@ -292,6 +319,40 @@ impl CheckerBoard {
     pub fn print_checkerboard_as_list(&self) {
         for i in 0..self.n {
             println!("Queen[{}] => {}", i + 1, self.queen[i] + 1);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn solves(n: usize) -> bool {
+        let mut cb = CheckerBoard::new(n);
+        cb.solve();
+        cb.is_correct()
+    }
+
+    #[test]
+    fn solves_a_single_queen() {
+        assert!(solves(1));
+    }
+
+    #[test]
+    fn solves_every_size_from_4_to_100() {
+        let failures: Vec<usize> = (4..=100).filter(|&n| !solves(n)).collect();
+
+        assert!(
+            failures.is_empty(),
+            "{} sizes out of 97 not solved: {failures:?}",
+            failures.len()
+        );
+    }
+
+    #[test]
+    fn solves_large_sizes() {
+        for n in [1_000, 10_000] {
+            assert!(solves(n), "size {n} not solved");
         }
     }
 }
