@@ -167,47 +167,112 @@ impl CheckerBoard {
     /// Return whether a solution was found (false if we are trapped),
     /// and the number of swaps made.
     fn local_search(&mut self) -> (bool, usize) {
-        let max_loop_with_same_conflict: usize = 4;
-        let mut nb_loop_with_same_conflict: usize = 0;
+        const MAX_PASSES_WITHOUT_PROGRESS: usize = 16;
+
+        let mut passes_without_progress: usize = 0;
         let mut conflicts: usize = self.get_conflicts();
         let mut nb_swap: usize = 0;
 
-        while conflicts != 0 && nb_loop_with_same_conflict < max_loop_with_same_conflict {
-            let mut nb_swap_in_loop: usize = 0;
+        while conflicts != 0 && passes_without_progress < MAX_PASSES_WITHOUT_PROGRESS {
+            let mut swaps_in_pass = self.swap_pass();
 
-            for i in 0..self.conflict_queens.len() {
-                for j in (i + 1)..self.conflict_queens.len() {
-                    let qi: usize = self.conflict_queens[i];
-                    let qj: usize = self.conflict_queens[j];
-                    if self.queen_is_attacked(qi) || self.queen_is_attacked(qj) {
-                        let prev_conflicts: usize = self.get_conflicts();
-                        self.swap_queens_columns(qi, qj);
-
-                        if prev_conflicts < self.get_conflicts() {
-                            self.swap_queens_columns(qi, qj);
-                        } else {
-                            nb_swap_in_loop += 1;
-                        }
-                    }
-                }
+            // No swap, or swaps that only moved the conflicts around:
+            // the queens of the set are not enough to solve them.
+            if self.get_conflicts() == conflicts {
+                swaps_in_pass += self.escape();
             }
 
-            // No swap could be made: we are trapped.
-            if nb_swap_in_loop == 0 {
+            // Still no swap possible at all: we are trapped.
+            if swaps_in_pass == 0 {
                 break;
             }
-            nb_swap += nb_swap_in_loop;
+            nb_swap += swaps_in_pass;
 
             let new_conflicts = self.get_conflicts();
             if new_conflicts == conflicts {
-                nb_loop_with_same_conflict += 1;
+                passes_without_progress += 1;
             } else {
-                nb_loop_with_same_conflict = 0;
+                passes_without_progress = 0;
             }
             conflicts = new_conflicts;
         }
 
         (conflicts == 0, nb_swap)
+    }
+
+    /// Try to swap every pair of queens of conflict_queens where at least
+    /// one is attacked, keeping the swaps that don't increase the conflicts.
+    /// Return the number of swaps kept.
+    fn swap_pass(&mut self) -> usize {
+        let mut swaps: usize = 0;
+
+        for i in 0..self.conflict_queens.len() {
+            for j in (i + 1)..self.conflict_queens.len() {
+                let qi: usize = self.conflict_queens[i];
+                let qj: usize = self.conflict_queens[j];
+
+                if (self.queen_is_attacked(qi) || self.queen_is_attacked(qj))
+                    && self.try_swap(qi, qj)
+                {
+                    swaps += 1;
+                }
+            }
+        }
+
+        swaps
+    }
+
+    /// Called when no swap inside conflict_queens helps any more.
+    /// The swaps made so far may have attacked queens outside the set, so
+    /// every attacked queen joins it. Then each attacked queen tries a few
+    /// random partners anywhere on the board, which also join the set when
+    /// the swap is kept. Return the number of swaps kept.
+    fn escape(&mut self) -> usize {
+        const MAX_PARTNER_TRIES: usize = 32;
+
+        for q in 0..self.n {
+            if self.queen_is_attacked(q) && !self.conflict_queens.contains(&q) {
+                self.conflict_queens.push(q);
+            }
+        }
+
+        let mut swaps: usize = 0;
+
+        for k in 0..self.conflict_queens.len() {
+            let qi = self.conflict_queens[k];
+
+            if !self.queen_is_attacked(qi) {
+                continue;
+            }
+
+            for _ in 0..MAX_PARTNER_TRIES {
+                let qj = self.rng.random_range(0..self.n);
+
+                if qj != qi && self.try_swap(qi, qj) {
+                    swaps += 1;
+                    if !self.conflict_queens.contains(&qj) {
+                        self.conflict_queens.push(qj);
+                    }
+                    break;
+                }
+            }
+        }
+
+        swaps
+    }
+
+    /// Swap the columns of two queens, and undo the swap if it increases
+    /// the number of conflicts. Return whether the swap was kept.
+    fn try_swap(&mut self, qi: usize, qj: usize) -> bool {
+        let prev_conflicts: usize = self.get_conflicts();
+        self.swap_queens_columns(qi, qj);
+
+        if prev_conflicts < self.get_conflicts() {
+            self.swap_queens_columns(qi, qj);
+            false
+        } else {
+            true
+        }
     }
 
     /// Method that get a random free column,
@@ -427,6 +492,21 @@ mod tests {
         let text = String::from_utf8(out).unwrap();
         assert_eq!(text.lines().count(), 4);
         assert!(text.starts_with("Queen[1] => "));
+    }
+
+    #[test]
+    fn rarely_restarts_on_small_sizes() {
+        let mut restarts = 0;
+
+        for n in 8..=20 {
+            for seed in 1..=10 {
+                let mut cb = CheckerBoard::new(n, seed);
+                restarts += cb.solve().restarts;
+            }
+        }
+
+        // 130 runs: less than one restart per run on average.
+        assert!(restarts < 130, "{restarts} restarts in 130 runs");
     }
 
     #[test]
